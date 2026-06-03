@@ -1,0 +1,16 @@
+# Build artifacts
+*.xpi
+.scaffold/
+build/
+*.tsbuildinfo
+
+# Node
+node_modules/
+
+# Env
+.env
+.env.local
+
+# Editor / OS
+.idea/
+.DS_Store

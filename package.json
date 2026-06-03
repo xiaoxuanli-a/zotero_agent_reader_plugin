@@ -1,0 +1,66 @@
+{
+  "name": "paper-reading-agent",
+  "type": "module",
+  "version": "0.1.0",
+  "description": "Chat with the open paper — the agent is a local codex CLI scoped to that paper's PDF.",
+  "config": {
+    "addonName": "Paper Reading Agent",
+    "addonID": "paper-reading-agent@xiaoxuan.li",
+    "addonRef": "paper-reading-agent",
+    "addonInstance": "PaperReadingAgentAddon",
+    "prefsPrefix": "extensions.paper-reading-agent"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xiaoxuanli-a/zotero_agent_reader_plugin.git"
+  },
+  "author": "xiaoxuan",
+  "bugs": {
+    "url": "https://github.com/xiaoxuanli-a/zotero_agent_reader_plugin/issues"
+  },
+  "homepage": "https://github.com/xiaoxuanli-a/zotero_agent_reader_plugin#readme",
+  "license": "AGPL-3.0-or-later",
+  "scripts": {
+    "start": "zotero-plugin serve",
+    "build": "zotero-plugin build && tsc --noEmit",
+    "lint:check": "prettier --check . && eslint .",
+    "lint:fix": "prettier --write . && eslint . --fix",
+    "release": "zotero-plugin release",
+    "test": "zotero-plugin test",
+    "update-deps": "npm update --save"
+  },
+  "dependencies": {
+    "dompurify": "3.1.7",
+    "katex": "0.16.11",
+    "marked": "12.0.2",
+    "zotero-plugin-toolkit": "^5.1.0-beta.13"
+  },
+  "devDependencies": {
+    "@types/chai": "^5.2.3",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^24.10.0",
+    "@zotero-plugin/eslint-config": "^0.6.7",
+    "chai": "^6.2.1",
+    "eslint": "^9.39.2",
+    "mocha": "^11.7.5",
+    "prettier": "^3.7.4",
+    "typescript": "^5.9.3",
+    "zotero-plugin-scaffold": "^0.8.2",
+    "zotero-types": "^4.1.0-beta.4"
+  },
+  "prettier": {
+    "printWidth": 80,
+    "tabWidth": 2,
+    "endOfLine": "lf",
+    "overrides": [
+      {
+        "files": [
+          "*.xhtml"
+        ],
+        "options": {
+          "htmlWhitespaceSensitivity": "css"
+        }
+      }
+    ]
+  }
+}
