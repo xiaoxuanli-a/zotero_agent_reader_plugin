@@ -1,0 +1,10 @@
+# Zotero plugin build artifact
+*.xpi
+
+# Node
+node_modules/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store

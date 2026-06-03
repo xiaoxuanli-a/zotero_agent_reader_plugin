@@ -1,0 +1,15 @@
+{
+  "manifest_version": 2,
+  "name": "Paper Reading Agent",
+  "version": "0.1.0",
+  "description": "Chat with the open paper — the agent is a local codex CLI scoped to that paper's PDF.",
+  "author": "xiaoxuan",
+  "applications": {
+    "zotero": {
+      "id": "paper-reading-agent@xiaoxuan.li",
+      "update_url": "https://raw.githubusercontent.com/xiaoxuanli-a/zotero_agent_reader_plugin/main/updates.json",
+      "strict_min_version": "9.0",
+      "strict_max_version": "10.9.9"
+    }
+  }
+}
