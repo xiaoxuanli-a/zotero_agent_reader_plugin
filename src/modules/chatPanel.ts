@@ -108,17 +108,32 @@ function injectStyles(doc, wrap) {
   } catch (e) { try { Zotero.debug("[PaperReadingAgent] injectStyles: " + e); } catch (e2) {} }
 }
 
-// Jump the open PDF reader to a page (1-based) of the given attachment item.
+// Jump the open PDF reader to a page (1-based). Resolve WHICH reader robustly:
+// the one already showing this attachment → else the active reader tab (the paper
+// the user is looking at) → else any open reader → else open the attachment. The
+// bare itemID match alone is unreliable when an item has multiple attachments
+// (the resolved PDF may differ from the one open in the reader), which silently
+// fell through to Reader.open() and did nothing for an already-open reader.
 function navigateToPage(attachmentID, page) {
-  if (!attachmentID || !page) return;
+  if (!page) return;
+  var loc = { pageIndex: page - 1 };             // Reader pageIndex is 0-based
   try {
     var R = Zotero.Reader;
-    var loc = { pageIndex: page - 1 };           // Reader pageIndex is 0-based
-    var r = (R && R._readers && R._readers.find)
-      ? R._readers.find(function (x) { return x.itemID === attachmentID; })
+    var readers = (R && R._readers) || [];
+    var r = attachmentID
+      ? readers.find(function (x) { return x.itemID === attachmentID; })
       : null;
-    if (r && r.navigate) r.navigate(loc);        // already open → navigate in place
-    else if (R && R.open) R.open(attachmentID, loc); // else open/focus + navigate
+    if (!r || !r.navigate) {                      // fall back to the active reader tab
+      try {
+        var win = Zotero.getMainWindow && Zotero.getMainWindow();
+        var selID = win && win.Zotero_Tabs && win.Zotero_Tabs.selectedID;
+        var ar = (selID && R && R.getByTabID) ? R.getByTabID(selID) : null;
+        if (ar && ar.navigate) r = ar;
+      } catch (e) {}
+    }
+    if ((!r || !r.navigate) && readers.length && readers[0].navigate) r = readers[0];
+    if (r && r.navigate) { r.navigate(loc); return; }
+    if (attachmentID && R && R.open) R.open(attachmentID, loc); // last resort: open it
   } catch (e) { try { Zotero.debug("[PaperReadingAgent] cite navigate: " + e); } catch (e2) {} }
 }
 
@@ -151,14 +166,9 @@ function setRich(bubble, text, attachmentID) {
         });
       })(as[i].getAttribute("href"));
     }
-    var cites = bubble.querySelectorAll(".pra-cite");   // [p.N] → jump to that PDF page
-    for (var k = 0; k < cites.length; k++) {
-      (function (span) {
-        span.addEventListener("click", function () {
-          navigateToPage(attachmentID, parseInt(span.getAttribute("data-page"), 10));
-        });
-      })(cites[k]);
-    }
+    // [p.N] citation clicks are handled via ONE delegated listener on the
+    // messages container (see mount) — robust to streaming re-renders and to any
+    // single span missing its binding.
   } catch (e) {}
 }
 
@@ -331,6 +341,12 @@ async function mount(body, item) {
   ui.input.addEventListener("input", function () {  // auto-grow
     ui.input.style.height = "auto";
     ui.input.style.height = Math.min(340, ui.input.scrollHeight) + "px";
+  });
+  // Delegated [p.N] citation clicks: ONE listener for the whole transcript, so it
+  // survives streaming re-renders and never depends on per-span binding.
+  ui.messages.addEventListener("click", function (e) {
+    var cite = e.target && e.target.closest && e.target.closest(".pra-cite");
+    if (cite) navigateToPage(ctx.attachmentID, parseInt(cite.getAttribute("data-page"), 10));
   });
 }
 
