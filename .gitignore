@@ -1,10 +1,16 @@
-# Zotero plugin build artifact
+# Build artifacts
 *.xpi
+.scaffold/
+build/
+*.tsbuildinfo
 
 # Node
 node_modules/
 
+# Env
+.env
+.env.local
+
 # Editor / OS
-.vscode/
 .idea/
 .DS_Store
