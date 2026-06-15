@@ -1,6 +1,6 @@
 # Third-Party Notices
 
-This plugin bundles the following third-party libraries under `zotero-plugin/content/vendor/` and ships them inside the `.xpi`. Each is distributed under its own license, reproduced in full below. The plugin's own code is licensed under the MIT License (see `LICENSE`).
+This plugin bundles the following third-party libraries (the JS via esbuild; KaTeX's stylesheet and fonts ship under `addon/content/vendor/`) inside the `.xpi`. Each is distributed under its own license, reproduced in full below. The plugin's own code is licensed under the GNU AGPL-3.0-or-later (see `LICENSE`).
 
 | Library | Version | License | Bundled file(s) |
 |---|---|---|---|

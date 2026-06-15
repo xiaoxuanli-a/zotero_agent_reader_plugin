@@ -26,19 +26,10 @@ paper, with multi-turn memory. Everything runs locally with your own
 
 1. **Get `paper-reading-agent.xpi`** — download it from the
    [Releases](https://github.com/xiaoxuanli-a/zotero_agent_reader_plugin/releases) page,
-   or build it yourself (plain JS, no build tooling — just zip it):
+   or build it yourself:
    ```bash
-   cd zotero-plugin
-   python3 - <<'PY'
-   import zipfile, os
-   with zipfile.ZipFile("paper-reading-agent.xpi", "w", zipfile.ZIP_DEFLATED) as z:
-       z.write("manifest.json"); z.write("bootstrap.js")
-       for base in ("content", "locale"):           # modules, icons, vendor libs + fonts, FTL
-           for root, _, files in os.walk(base):
-               for fn in files:
-                   if fn != ".DS_Store":
-                       z.write(os.path.join(root, fn))
-   PY
+   npm install
+   npm run build   # outputs .scaffold/build/paper-reading-agent.xpi
    ```
 2. In Zotero: **Tools → Plugins → ⚙ (gear icon) → Install Plugin From File…** →
    pick `paper-reading-agent.xpi`, then **restart Zotero**.
@@ -73,13 +64,23 @@ Set via **Settings → Advanced → Config Editor**
 | `timeoutSec` | `600` | Per-turn timeout. |
 | `webSearch` | `true` | Set `false` to disable codex web search. |
 
-## More
+## Development
 
-- Plugin internals, architecture, and verification status:
-  [`zotero-plugin/README.md`](zotero-plugin/README.md)
-- **License:** MIT (see [`LICENSE`](LICENSE)). Bundled third-party libraries
-  (marked, KaTeX, DOMPurify) and their licenses:
-  [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+Built on [windingwind's `zotero-plugin-template`](https://github.com/windingwind/zotero-plugin-template)
+(TypeScript + esbuild via `zotero-plugin-scaffold`):
+
+```bash
+npm install
+npm start       # launch a dev Zotero with hot-reload
+npm run build   # produce the .xpi
+npm run release # version bump + GitHub release + update.json
+```
+
+## License
+
+**AGPL-3.0-or-later** (see [`LICENSE`](LICENSE)). Bundled third-party libraries
+(marked, KaTeX, DOMPurify) keep their own permissive licenses — see
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
 
 > **Note:** the codex `app-server` JSON-RPC protocol this plugin drives is marked
 > *experimental* by codex and pinned to **0.130.x** — a codex upgrade may change
