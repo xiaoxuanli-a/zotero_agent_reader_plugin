@@ -1,21 +1,74 @@
 name: Release
 
+# Tag-driven release that matches THIS repo's auto-update setup:
+#   manifest update_url → raw .../main/updates.json (manually-versioned, with an "s").
+# The scaffold's `npm run release` uses a different paradigm (a "release" tag
+# hosting update.json) and never updated our root updates.json, so we publish
+# directly here instead: build → GitHub release + xpi → bump updates.json on main.
+#
+# Release flow: bump version in package.json (+ package-lock.json) on main,
+# commit, then `git tag vX.Y.Z && git push --tags`. This workflow does the rest.
+
 on:
   push:
     tags:
-      - v**
+      - "v*"
 
 permissions:
   contents: write
-  issues: write
-  pull-requests: write
 
 jobs:
-  create-release:
-    uses: zotero-plugin-dev/workflows/.github/workflows/release-plugin.yml@main
-    # You can customize any of the inputs here.
-    # If you omit an input, its default value will be used.
-    with:
-      build: "npm run build"
-      release: "npm run release"
-    secrets: inherit
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build xpi
+        run: npm run build
+
+      - name: Create GitHub release + upload xpi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          XPI=.scaffold/build/paper-reading-agent.xpi
+          test -f "$XPI" || { echo "::error::$XPI not found"; exit 1; }
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            "$XPI" \
+          || gh release upload "$GITHUB_REF_NAME" "$XPI" --clobber
+
+      - name: Point updates.json at this release (on main)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          node -e '
+            const fs = require("fs");
+            const v = process.argv[1];
+            const repo = process.env.GITHUB_REPOSITORY;
+            const u = JSON.parse(fs.readFileSync("updates.json", "utf8"));
+            const id = Object.keys(u.addons)[0];
+            const e = u.addons[id].updates[0];
+            e.version = v;
+            e.update_link = `https://github.com/${repo}/releases/download/v${v}/paper-reading-agent.xpi`;
+            fs.writeFileSync("updates.json", JSON.stringify(u, null, 2) + "\n");
+          ' "$VERSION"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add updates.json
+          git diff --cached --quiet || git commit -m "Point updates.json at ${GITHUB_REF_NAME}"
+          git push origin HEAD:main
