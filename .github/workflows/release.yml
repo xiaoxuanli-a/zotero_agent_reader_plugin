@@ -13,6 +13,11 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to (re)publish, e.g. v0.1.1"
+        required: true
 
 permissions:
   contents: write
@@ -20,6 +25,8 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
     steps:
       - name: Checkout main
         uses: actions/checkout@v4
@@ -45,17 +52,17 @@ jobs:
         run: |
           XPI=.scaffold/build/paper-reading-agent.xpi
           test -f "$XPI" || { echo "::error::$XPI not found"; exit 1; }
-          gh release create "$GITHUB_REF_NAME" \
-            --title "$GITHUB_REF_NAME" \
+          gh release create "$TAG" \
+            --title "$TAG" \
             --generate-notes \
             "$XPI" \
-          || gh release upload "$GITHUB_REF_NAME" "$XPI" --clobber
+          || gh release upload "$TAG" "$XPI" --clobber
 
       - name: Point updates.json at this release (on main)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${TAG#v}"
           node -e '
             const fs = require("fs");
             const v = process.argv[1];
@@ -70,5 +77,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add updates.json
-          git diff --cached --quiet || git commit -m "Point updates.json at ${GITHUB_REF_NAME}"
+          git diff --cached --quiet || git commit -m "Point updates.json at ${TAG}"
           git push origin HEAD:main
