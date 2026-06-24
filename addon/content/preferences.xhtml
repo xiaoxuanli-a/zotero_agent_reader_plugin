@@ -1,0 +1,119 @@
+<!--
+  Settings pane for Paper Reading Agent (Zotero 7+ Zotero.PreferencePanes).
+  Loaded as a FRAGMENT (NO XML declaration / NO DOCTYPE): Zotero wraps this file
+  inside its own <div> and parses it as application/xml, so a leading <?xml?> makes
+  the document not well-formed and the pane renders blank.
+  Controls auto-bind to prefs via a short pref key; zotero-plugin-scaffold rewrites
+  each to the full extensions.paper-reading-agent.<key> at build time (the keys must
+  be declared in addon/prefs.js). The backend group show/hide and the Test button
+  are wired in content/preferences.js (loaded via register scripts).
+-->
+<vbox
+  xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
+  xmlns:html="http://www.w3.org/1999/xhtml"
+  style="padding: 4px 8px;"
+>
+  <groupbox>
+    <label><html:h2>Paper Reading Agent</html:h2></label>
+    <description style="margin: 0 0 6px;">
+      Chat with the open paper. Choose which local agent CLI answers, and how it runs.
+    </description>
+    <hbox align="center">
+      <label value="Agent backend" style="min-width: 12em;" />
+      <menulist
+        id="pra-backend"
+        preference="backend"
+        native="true"
+      >
+        <menupopup>
+          <menuitem value="codex" label="Codex" />
+          <menuitem value="claude" label="Claude" />
+        </menupopup>
+      </menulist>
+    </hbox>
+  </groupbox>
+
+  <groupbox id="pra-codex-group">
+    <label><html:h2>Codex</html:h2></label>
+    <hbox align="center">
+      <label value="Path (optional)" style="min-width: 12em;" />
+      <html:input
+        type="text"
+        preference="codexPath"
+        placeholder="auto-detected on PATH"
+        style="flex: 1;"
+      />
+    </hbox>
+    <hbox align="center">
+      <label value="Model" style="min-width: 12em;" />
+      <html:input
+        type="text"
+        preference="model"
+        placeholder="codex default"
+        style="flex: 1;"
+      />
+    </hbox>
+    <hbox align="center">
+      <label value="Reasoning effort" style="min-width: 12em;" />
+      <menulist preference="reasoningEffort" native="true">
+        <menupopup>
+          <menuitem value="" label="Default" />
+          <menuitem value="minimal" label="minimal (fastest)" />
+          <menuitem value="low" label="low" />
+          <menuitem value="medium" label="medium" />
+          <menuitem value="high" label="high (deepest)" />
+        </menupopup>
+      </menulist>
+    </hbox>
+  </groupbox>
+
+  <groupbox id="pra-claude-group">
+    <label><html:h2>Claude</html:h2></label>
+    <hbox align="center">
+      <label value="Path (optional)" style="min-width: 12em;" />
+      <html:input
+        type="text"
+        preference="claudePath"
+        placeholder="auto-detected on PATH"
+        style="flex: 1;"
+      />
+    </hbox>
+    <hbox align="center">
+      <label value="Model" style="min-width: 12em;" />
+      <html:input
+        type="text"
+        preference="claudeModel"
+        placeholder="claude default — e.g. sonnet, haiku"
+        style="flex: 1;"
+      />
+    </hbox>
+    <hbox align="center">
+      <label value="Permission mode" style="min-width: 12em;" />
+      <menulist preference="permissionMode" native="true">
+        <menupopup>
+          <menuitem value="default" label="default (read-only)" />
+          <menuitem value="acceptEdits" label="acceptEdits" />
+          <menuitem value="dontAsk" label="dontAsk" />
+        </menupopup>
+      </menulist>
+    </hbox>
+  </groupbox>
+
+  <groupbox>
+    <label><html:h2>General</html:h2></label>
+    <hbox align="center">
+      <checkbox preference="webSearch" label="Enable web search" />
+    </hbox>
+    <hbox align="center">
+      <label value="Turn timeout (seconds)" style="min-width: 12em;" />
+      <html:input type="number" preference="timeoutSec" min="30" max="3600" style="width: 7em;" />
+    </hbox>
+  </groupbox>
+
+  <groupbox>
+    <hbox align="center">
+      <button id="pra-test" label="Test connection" />
+      <label id="pra-test-status" value="" style="margin-inline-start: 8px;" />
+    </hbox>
+  </groupbox>
+</vbox>

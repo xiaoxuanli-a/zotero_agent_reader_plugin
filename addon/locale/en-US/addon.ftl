@@ -3,6 +3,6 @@
 # resolve as `paper-reading-agent-header` / `paper-reading-agent-sidenav` —
 # which is what registerSection references in chatPanel.ts.
 header =
-    .label = Codex Chat
+    .label = Paper Reading Agent
 sidenav =
-    .tooltiptext = Codex Chat
+    .tooltiptext = Paper Reading Agent

@@ -3,10 +3,12 @@
  * itemContext.ts — resolve the current Zotero item's PDF and build a per-item
  * working directory for codex (Zotero / privileged chrome only).
  *
- * We do NOT copy the PDF: we point codex's AGENTS.md at Zotero's real attachment
- * path and let it read the PDF on demand with pdftotext. The working dir holds
- * only AGENTS.md (the scoping instructions), keyed by the attachment key.
+ * We do NOT copy the PDF: we point the agent's instruction file at Zotero's real
+ * attachment path and let it read the PDF on demand with pdftotext. The working
+ * dir holds only the per-backend instruction files (codex reads AGENTS.md, claude
+ * reads CLAUDE.md — same content), keyed by the attachment key.
  */
+import { instructionFiles } from "./backends";
 
 var AGENTS_TEMPLATE =
   "# Reading assistant scope\n\n" +
@@ -77,7 +79,11 @@ export async function prepareWorkdir(item) {
   var agents = AGENTS_TEMPLATE
     .replace("{title}", title)
     .split("{pdfPath}").join(pdfPath);
-  await IOUtils.writeUTF8(PathUtils.join(workdir, "AGENTS.md"), agents);
+  // one instruction file per backend convention (AGENTS.md, CLAUDE.md), same content
+  var files = instructionFiles();
+  for (var i = 0; i < files.length; i++) {
+    await IOUtils.writeUTF8(PathUtils.join(workdir, files[i]), agents);
+  }
 
   return { workdir: workdir, pdfPath: pdfPath, key: key, title: title, attachmentID: att.id };
 }

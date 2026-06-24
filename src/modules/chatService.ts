@@ -10,7 +10,7 @@
  *                 onStatus(text), onDone(), onError(text) }
  */
 import * as PRAStore from "./store";
-import * as PRAAppServer from "./appServer";
+import { getBackend } from "./backends";
 
 export async function runTurn(opts, ctx, conv, content, ui, liveRef) {
   var userMsg = { role: "user", content: content };
@@ -23,13 +23,21 @@ export async function runTurn(opts, ctx, conv, content, ui, liveRef) {
 
   var terminal = false;
 
-  // app-server streams TOKEN deltas → concatenate (not join with blank lines)
+  // backends stream TOKEN deltas → concatenate (not join with blank lines)
   function persist() { PRAStore.save(conv); }
 
-  await PRAAppServer.runTurn(opts, ctx.workdir, conv.codex_session_id, content, function (ev) {
+  var backend = getBackend(opts.backend);
+  var handle = PRAStore.getSessionHandle(conv, backend.id);
+  // let the backend read files outside the workdir (the PDF lives in Zotero's
+  // storage tree); codex ignores opts.addDir, claude maps it to --add-dir.
+  var runOpts = opts;
+  try {
+    if (ctx.pdfPath) runOpts = Object.assign({}, opts, { addDir: PathUtils.parent(ctx.pdfPath) });
+  } catch (e) { runOpts = opts; }
+
+  await backend.runTurn(runOpts, ctx.workdir, handle, content, function (ev) {
     if (ev.kind === "thread_started") {
-      if (ev.sessionId && !conv.codex_session_id) {
-        conv.codex_session_id = ev.sessionId;
+      if (ev.sessionId && PRAStore.setSessionHandle(conv, backend.id, ev.sessionId)) {
         PRAStore.save(conv);
       }
     } else if (ev.kind === "delta") {
