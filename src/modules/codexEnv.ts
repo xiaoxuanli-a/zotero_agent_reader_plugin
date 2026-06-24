@@ -1,17 +1,21 @@
 // @ts-nocheck
 /*
- * codexEnv.ts — locate the `codex` binary + build the environment to run it in.
- * Shared by appServer.ts (the live driver) and codexDriver.ts (healthcheck).
+ * codexEnv.ts — locate a backend CLI binary (`codex`, `claude`, …) + build the
+ * environment to run it in. Shared by every backend driver.
  *
- * GUI-launched Zotero does NOT inherit the login shell's PATH, so a codex in a
- * non-standard dir (nvm/volta/asdf, ~/.local/bin from `codex update`, …) is
- * invisible to a bare pathSearch. Resolution order:
- *   1. explicit `codexPath` pref — always wins.
+ * GUI-launched Zotero does NOT inherit the login shell's PATH, so a binary in a
+ * non-standard dir (nvm/volta/asdf, ~/.local/bin from a self-update, …) is
+ * invisible to a bare pathSearch. Resolution order (per binary):
+ *   1. explicit *Path pref — always wins.
  *   2. FAST PATH: augment PATH with the usual bin dirs, then pathSearch.
- *   3. FALLBACK: ask the user's LOGIN shell where codex is + what PATH it uses
- *      (`$SHELL -lic`), exactly how VS Code & co. resolve the shell environment.
- *      Result is cached for the process (we spawn the shell at most once).
+ *   3. FALLBACK: ask the user's LOGIN shell where the binary is + what PATH it
+ *      uses (`$SHELL -lic`), exactly how VS Code & co. resolve the shell env.
+ *      Result is cached per binary (we spawn the shell at most once each).
  * Windows is left to the OS PATH (GUI apps inherit the system env there).
+ *
+ * resolveCodex/resolveClaude are thin wrappers over the generic resolveBinary.
+ * claude needs `injectUser`: its OAuth token lives in the macOS keychain keyed on
+ * the USER env var, so a spawn env with HOME but no USER fails as "Not logged in".
  */
 
 function getSubprocess() {
@@ -36,22 +40,22 @@ function log(m) {
 }
 
 // Usual package-manager bin dirs (fast path — no shell spawn). ~/.local/bin is
-// where `codex update` self-installs; listed first so it beats an older
-// `npm i -g` copy in /opt/homebrew/bin.
-function commonBins(env, opts) {
+// where `codex update` / the claude installer self-install; listed first so it
+// beats an older `npm i -g` copy in /opt/homebrew/bin.
+function commonBins(env, pathPref) {
   var extra = [];
-  if (opts && opts.codexPath) {
-    var i = opts.codexPath.lastIndexOf("/");
-    if (i > 0) extra.push(opts.codexPath.slice(0, i));
+  if (pathPref) {
+    var i = pathPref.lastIndexOf("/");
+    if (i > 0) extra.push(pathPref.slice(0, i));
   }
   if (env.HOME) extra.push(env.HOME + "/.local/bin");
   return extra.concat(["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"]);
 }
 
 // Prepend dirs not already present to env.PATH. Mutates + returns env.
-function augmentEnvPath(env, opts) {
+function augmentEnvPath(env, pathPref) {
   if (isWindows()) return env;
-  var extra = commonBins(env, opts);
+  var extra = commonBins(env, pathPref);
   var parts = (env.PATH || "").split(":").filter(Boolean);
   var pre = [];
   for (var e = 0; e < extra.length; e++) {
@@ -62,10 +66,28 @@ function augmentEnvPath(env, opts) {
   return env;
 }
 
-// { codex: <abs path|null>, path: <login PATH|null> } — resolved once, cached.
-var SHELL_CACHE = null;
+// Some CLIs (claude) read their credentials from the macOS keychain keyed on the
+// USER identity, which a GUI-launched app may not propagate. Derive USER/LOGNAME
+// from the existing env or the HOME basename so the keychain lookup resolves.
+function ensureUser(env) {
+  if (isWindows()) return env;
+  var user = env.USER || env.LOGNAME;
+  if (!user && env.HOME) {
+    var h = env.HOME.replace(/\/+$/, "");
+    var j = h.lastIndexOf("/");
+    if (j >= 0) user = h.slice(j + 1);
+  }
+  if (user) {
+    if (!env.USER) env.USER = user;
+    if (!env.LOGNAME) env.LOGNAME = user;
+  }
+  return env;
+}
+
+// per-binary { bin: <abs path|null>, path: <login PATH|null> } — resolved once.
+var SHELL_CACHE = Object.create(null);
 export function clearCache() {
-  SHELL_CACHE = null;
+  SHELL_CACHE = Object.create(null);
 }
 
 function between(s, a, b) {
@@ -76,16 +98,20 @@ function between(s, a, b) {
   return s.slice(i + a.length, j).trim();
 }
 
-// Spawn the user's LOGIN shell once to capture codex's location + the real PATH.
-async function resolveViaLoginShell(Subprocess, env) {
-  if (SHELL_CACHE) return SHELL_CACHE;
-  SHELL_CACHE = { codex: null, path: null };
-  if (isWindows()) return SHELL_CACHE;
+// Spawn the user's LOGIN shell once per binary to capture its location + the real
+// PATH (the PATH part is the same each time but harmless to re-read).
+async function resolveViaLoginShell(Subprocess, env, binName) {
+  if (SHELL_CACHE[binName]) return SHELL_CACHE[binName];
+  var cached = { bin: null, path: null };
+  SHELL_CACHE[binName] = cached;
+  if (isWindows()) return cached;
   var shell = env.SHELL || "/bin/bash";
   // -l login (sources profile) + -i interactive (sources rc, where PATH edits
   // usually live) + -c run-and-exit. START/END markers survive rc banner noise.
   var script =
-    "echo __PRA_C_S__; command -v codex 2>/dev/null; echo __PRA_C_E__; " +
+    "echo __PRA_C_S__; command -v " +
+    binName +
+    " 2>/dev/null; echo __PRA_C_E__; " +
     'echo __PRA_P_S__; echo "$PATH"; echo __PRA_P_E__';
   var proc = null;
   try {
@@ -115,31 +141,33 @@ async function resolveViaLoginShell(Subprocess, env) {
     });
     var out = await Promise.race([readAll, timer]);
     if (out === null) {
-      log("login-shell timed out");
+      log("login-shell timed out for " + binName);
       try {
         proc.kill();
       } catch (e) {
         /* ignore */
       }
-      return SHELL_CACHE;
+      return cached;
     }
     try {
       await proc.wait();
     } catch (e) {
       /* ignore */
     }
-    var codex = between(out, "__PRA_C_S__", "__PRA_C_E__");
+    var bin = between(out, "__PRA_C_S__", "__PRA_C_E__");
     var path = between(out, "__PRA_P_S__", "__PRA_P_E__");
-    if (codex) SHELL_CACHE.codex = codex.split("\n").filter(Boolean).pop();
-    if (path) SHELL_CACHE.path = path.split("\n").filter(Boolean).pop();
+    if (bin) cached.bin = bin.split("\n").filter(Boolean).pop();
+    if (path) cached.path = path.split("\n").filter(Boolean).pop();
     log(
-      "login-shell: codex=" +
-        SHELL_CACHE.codex +
+      "login-shell: " +
+        binName +
+        "=" +
+        cached.bin +
         " pathLen=" +
-        (SHELL_CACHE.path ? SHELL_CACHE.path.length : 0),
+        (cached.path ? cached.path.length : 0),
     );
   } catch (e) {
-    log("login-shell failed: " + e);
+    log("login-shell failed for " + binName + ": " + e);
     if (proc) {
       try {
         proc.kill();
@@ -148,42 +176,62 @@ async function resolveViaLoginShell(Subprocess, env) {
       }
     }
   }
-  return SHELL_CACHE;
+  return cached;
 }
 
-// Resolve { command, env } to spawn codex with. `env` already has an augmented
-// PATH so codex's own node/pdftotext children resolve too. Throws if not found.
-export async function resolveCodex(opts) {
+// Resolve { command, env } to spawn `binName` with. `env` already has an augmented
+// PATH so the binary's own child processes resolve too. Throws if not found.
+//   pathPref      — an explicit absolute path pref (wins if set)
+//   options.injectUser — ensure USER/LOGNAME are present (claude keychain auth)
+export async function resolveBinary(binName, pathPref, opts, options) {
   opts = opts || {};
+  options = options || {};
   var Subprocess = getSubprocess();
-  var env = augmentEnvPath(Subprocess.getEnvironment(), opts);
+  var env = augmentEnvPath(Subprocess.getEnvironment(), pathPref);
+  if (options.injectUser) ensureUser(env);
 
   // 1. explicit pref wins
-  if (opts.codexPath) return { command: opts.codexPath, env: env };
+  if (pathPref) return { command: pathPref, env: env };
 
   // 2. fast path: pathSearch over the whitelisted PATH
   try {
-    return { command: await Subprocess.pathSearch("codex", env), env: env };
+    return { command: await Subprocess.pathSearch(binName, env), env: env };
   } catch (e) {
     /* fall through to the login shell */
   }
 
   // 3. fallback: ask the login shell, and merge its PATH so children resolve
-  var r = await resolveViaLoginShell(Subprocess, env);
+  var r = await resolveViaLoginShell(Subprocess, env, binName);
   if (r.path) {
     var parts = (env.PATH || "").split(":").filter(Boolean);
-    var add = r.path.split(":").filter(Boolean).filter(function (d) {
-      return parts.indexOf(d) < 0;
-    });
+    var add = r.path
+      .split(":")
+      .filter(Boolean)
+      .filter(function (d) {
+        return parts.indexOf(d) < 0;
+      });
     if (add.length) env.PATH = parts.concat(add).join(":");
   }
-  if (r.codex) return { command: r.codex, env: env };
+  if (r.bin) return { command: r.bin, env: env };
   // last try with the merged login PATH
   try {
-    return { command: await Subprocess.pathSearch("codex", env), env: env };
+    return { command: await Subprocess.pathSearch(binName, env), env: env };
   } catch (e) {
     throw new Error(
-      "codex not found — install it, or set its absolute path in preferences (extensions.paper-reading-agent.codexPath).",
+      binName +
+        " not found — install it, or set its absolute path in preferences.",
     );
   }
+}
+
+// codex: file-based auth (~/.codex/auth.json), no USER needed.
+export async function resolveCodex(opts) {
+  opts = opts || {};
+  return resolveBinary("codex", opts.codexPath, opts, {});
+}
+
+// claude: keychain OAuth — MUST inject USER (see ensureUser).
+export async function resolveClaude(opts) {
+  opts = opts || {};
+  return resolveBinary("claude", opts.claudePath, opts, { injectUser: true });
 }

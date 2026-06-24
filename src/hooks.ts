@@ -11,7 +11,7 @@ import {
   register as registerChatSection,
   unregister as unregisterChatSection,
 } from "./modules/chatPanel";
-import { shutdown as appServerShutdown } from "./modules/appServer";
+import { shutdownAll as shutdownBackends } from "./modules/backends";
 
 // scaffold prefixes the FTL file name + message IDs with the addon ref, so the
 // built file is `paper-reading-agent-addon.ftl`.
@@ -52,6 +52,20 @@ async function onStartup() {
 
   registerChatSection({ pluginID: config.addonID, rootURI });
 
+  // Settings pane (Zotero 7+). The pane's preference="..." controls auto-bind to
+  // prefs; content/preferences.js handles backend show/hide + the Test button.
+  try {
+    Zotero.PreferencePanes.register({
+      pluginID: config.addonID,
+      src: rootURI + "content/preferences.xhtml",
+      label: "Paper Reading Agent",
+      image: rootURI + "content/icons/favicon.png",
+      scripts: [rootURI + "content/preferences.js"],
+    });
+  } catch (e) {
+    Zotero.debug("[PaperReadingAgent] PreferencePanes.register failed: " + e);
+  }
+
   // windows already open when the plugin starts
   Zotero.getMainWindows().forEach((win) => injectFTL(win));
 
@@ -73,7 +87,7 @@ function onShutdown() {
     /* ignore */
   }
   try {
-    appServerShutdown(); // kill the persistent codex app-server
+    shutdownBackends(); // kill the persistent codex app-server (claude is a no-op)
   } catch (e) {
     /* ignore */
   }

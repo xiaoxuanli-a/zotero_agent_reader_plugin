@@ -7,7 +7,15 @@
 declare namespace _ZoteroTypes {
   interface Prefs {
     PluginPrefsMap: {
-      
+      "backend": string;
+      "codexPath": string;
+      "model": string;
+      "reasoningEffort": string;
+      "claudePath": string;
+      "claudeModel": string;
+      "permissionMode": string;
+      "webSearch": boolean;
+      "timeoutSec": number;
     };
   }
 }

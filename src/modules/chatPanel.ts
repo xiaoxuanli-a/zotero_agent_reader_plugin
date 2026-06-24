@@ -8,7 +8,7 @@
  * `body` DOM node — no HTTP, no SSE.
  */
 import * as PRARender from "./render";
-import * as PRACodexDriver from "./codexDriver";
+import { getBackend } from "./backends";
 import * as PRAItemContext from "./itemContext";
 import * as PRAStore from "./store";
 import * as PRAChatService from "./chatService";
@@ -23,12 +23,19 @@ function prefs() {
     return (v === undefined || v === null || v === "") ? d : v;
   }
   return {
+    backend: g("backend", "codex") || "codex",                // codex | claude
+    // codex-specific
     codexPath: g("codexPath", "") || undefined,
     model: g("model", "") || undefined,
     reasoningEffort: g("reasoningEffort", "") || undefined,   // minimal|low|medium|high — lower = faster, less deep
+    sandbox: "read-only",
+    // claude-specific
+    claudePath: g("claudePath", "") || undefined,
+    claudeModel: g("claudeModel", "") || undefined,           // e.g. sonnet | haiku (default: claude's default)
+    permissionMode: g("permissionMode", "") || undefined,     // default (read-only allowlist applied in the driver)
+    // shared
     timeoutSec: parseInt(g("timeoutSec", 600), 10) || 600,
     webSearch: g("webSearch", true) !== false,
-    sandbox: "read-only",
   };
 }
 
@@ -242,7 +249,7 @@ function flushRender(session) {
 }
 
 function startTurn(session, content) {
-  var run = session.run = { liveRef: {}, startedAt: Date.now(), lastActivity: "thinking…", finished: false, text: "", timer: 0 };
+  var run = session.run = { liveRef: {}, startedAt: Date.now(), lastActivity: "thinking…", finished: false, text: "", target: "", drip: 0, timer: 0 };
   setSending(session, true);
   paintStatus(session);
   run.timer = setInterval(function () { paintStatus(session); }, 1000);
@@ -250,6 +257,9 @@ function startTurn(session, content) {
     if (run.finished) return;
     run.finished = true;
     try { clearInterval(run.timer); } catch (e) {}
+    try { clearInterval(run.drip); } catch (e) {}
+    run.drip = 0;
+    run.text = run.target;   // reveal any not-yet-dripped tail, then render the full answer
     flushRender(session);
     var v = session.view;
     if (v) {
@@ -259,10 +269,26 @@ function startTurn(session, content) {
     session.run = null;
     setSending(session, false);
   }
+  // Typewriter buffer: some backends (claude -p) stream in big lumpy bursts
+  // (~30 chars every ~0.5s) instead of per-token, which looks janky. Reveal the
+  // received text at a steady cadence so it flows smoothly. Adaptive — the step
+  // grows with the backlog, so a token-level backend (codex) stays ~realtime.
+  function startDrip() {
+    if (run.drip) return;
+    run.drip = setInterval(function () {
+      if (run.finished) { try { clearInterval(run.drip); } catch (e) {} run.drip = 0; return; }
+      if (run.text.length < run.target.length) {
+        var backlog = run.target.length - run.text.length;
+        var step = Math.max(1, Math.ceil(backlog / 10));
+        run.text = run.target.slice(0, run.text.length + step);
+        scheduleRender(session);
+      }
+    }, 40);
+  }
   var adapter = {
     onUser: function (m) { var v = session.view; if (v) { renderMessage(v.doc, v.ui.messages, m, v.attachmentID); v.ui.messages.scrollTop = v.ui.messages.scrollHeight; } },
     onAssistantStart: function (m) { var v = session.view; if (v) { v.assistantBubble = renderMessage(v.doc, v.ui.messages, m, v.attachmentID); v.assistantBubble.classList.add("streaming"); } },
-    onAssistantUpdate: function (text) { run.text = text; scheduleRender(session); },
+    onAssistantUpdate: function (text) { run.target = text; startDrip(); },
     onStatus: function (s) { run.lastActivity = String(s).slice(0, 120); paintStatus(session); },
     onDone: function () { endTurn(null); },
     onError: function (msg) { endTurn(msg); },
@@ -276,10 +302,12 @@ async function mount(body, item) {
   var doc = body.ownerDocument;
   var ui = buildSkeleton(doc, body);
 
-  PRACodexDriver.healthcheck(prefs()).then(function (h) {
+  var p = prefs();
+  var backend = getBackend(p.backend);
+  backend.healthcheck(p).then(function (h) {
     ui.banner.textContent = h.ok
-      ? ("codex ready · " + (h.version || ""))
-      : ((h.error || "codex unavailable") + " — run `codex login` or set the codex path");
+      ? (backend.label + " ready · " + (h.version || ""))
+      : ((h.error || (backend.label + " unavailable")) + " — " + backend.loginHint);
     ui.banner.classList.remove("ok", "err");
     ui.banner.classList.add(h.ok ? "ok" : "err");
   });
@@ -402,5 +430,14 @@ export function dump() {   // debug: inspect per-paper session state from Run Ja
   return out;
 }
 
+// Run the selected backend's healthcheck — used by the Settings pane's "Test
+// connection" button (Zotero.PaperReadingAgent.healthcheck).
+export async function healthcheck() {
+  var p = prefs();
+  var backend = getBackend(p.backend);
+  var h = await backend.healthcheck(p);
+  return { ok: !!(h && h.ok), version: h && h.version, error: h && h.error, label: backend.label };
+}
+
 // reachable from Run JavaScript for debugging (unchanged handle from v0.1.0)
-try { Zotero.PaperReadingAgent = { register: register, unregister: unregister, dump: dump }; } catch (e) {}
+try { Zotero.PaperReadingAgent = { register: register, unregister: unregister, dump: dump, healthcheck: healthcheck }; } catch (e) {}
