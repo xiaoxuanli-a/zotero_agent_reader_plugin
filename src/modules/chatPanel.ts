@@ -12,6 +12,7 @@ import { getBackend } from "./backends";
 import * as PRAItemContext from "./itemContext";
 import * as PRAStore from "./store";
 import * as PRAChatService from "./chatService";
+import * as PRAUpdater from "./updater";
 
 var SECTION_ID = null;
 var PLUGIN_ID = null;
@@ -575,5 +576,14 @@ export async function healthcheck() {
   return { ok: !!(h && h.ok), version: h && h.version, error: h && h.error, label: backend.label };
 }
 
+// On-demand update check/install — used by the Settings pane's "Check for updates"
+// button. Uses the plugin id passed to register() (config.addonID).
+export async function checkForUpdates() {
+  return await PRAUpdater.checkForUpdates(PLUGIN_ID);
+}
+export async function installUpdate() {
+  return await PRAUpdater.installPendingUpdate();
+}
+
 // reachable from Run JavaScript for debugging (unchanged handle from v0.1.0)
-try { Zotero.PaperReadingAgent = { register: register, unregister: unregister, dump: dump, healthcheck: healthcheck }; } catch (e) {}
+try { Zotero.PaperReadingAgent = { register: register, unregister: unregister, dump: dump, healthcheck: healthcheck, checkForUpdates: checkForUpdates, installUpdate: installUpdate }; } catch (e) {}
