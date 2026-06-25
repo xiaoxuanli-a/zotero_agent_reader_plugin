@@ -12,8 +12,11 @@
 import * as PRAStore from "./store";
 import { getBackend } from "./backends";
 
-export async function runTurn(opts, ctx, conv, content, ui, liveRef) {
+export async function runTurn(opts, ctx, conv, content, images, ui, liveRef) {
+  // images: [{ path, thumb }] — path is the on-disk file (sent to the backend),
+  // thumb is a small data URL kept only for re-rendering the bubble after reload.
   var userMsg = { role: "user", content: content };
+  if (images && images.length) userMsg.images = images;
   var assistant = { role: "assistant", content: "" };
   conv.messages.push(userMsg);
   conv.messages.push(assistant);
@@ -32,7 +35,9 @@ export async function runTurn(opts, ctx, conv, content, ui, liveRef) {
   // storage tree); codex ignores opts.addDir, claude maps it to --add-dir.
   var runOpts = opts;
   try {
-    if (ctx.pdfPath) runOpts = Object.assign({}, opts, { addDir: PathUtils.parent(ctx.pdfPath) });
+    runOpts = Object.assign({}, opts);
+    if (ctx.pdfPath) runOpts.addDir = PathUtils.parent(ctx.pdfPath);
+    if (images && images.length) runOpts.images = images.map(function (im) { return im.path; });
   } catch (e) { runOpts = opts; }
 
   await backend.runTurn(runOpts, ctx.workdir, handle, content, function (ev) {

@@ -12,6 +12,7 @@ import { getBackend } from "./backends";
 import * as PRAItemContext from "./itemContext";
 import * as PRAStore from "./store";
 import * as PRAChatService from "./chatService";
+import * as PRAUpdater from "./updater";
 
 var SECTION_ID = null;
 var PLUGIN_ID = null;
@@ -80,6 +81,16 @@ var PRA_CSS = [
   ".pra-send{flex:none;height:34px;padding:0 20px;border:none;border-radius:10px;cursor:pointer;background:var(--accent-blue,#2563eb);color:var(--accent-white,#fff);font:inherit;font-weight:600;transition:filter .15s,opacity .15s;}",
   ".pra-send:hover{filter:brightness(1.07);}.pra-send:active{filter:brightness(.95);}.pra-send:disabled{opacity:.5;cursor:default;}",
   ".pra-send.stop{background:var(--accent-red,#d23b3b);}",
+  // pending image attachments (composer) — small removable thumbnails
+  ".pra-attach{display:flex;flex-wrap:wrap;gap:6px;}",
+  ".pra-chip{position:relative;width:46px;height:46px;border-radius:8px;overflow:hidden;border:1px solid var(--color-border,rgba(0,0,0,.16));background:var(--fill-quinary,rgba(0,0,0,.06));flex:none;}",
+  ".pra-chip-img{width:100%;height:100%;object-fit:cover;display:block;}",
+  ".pra-chip-x{position:absolute;top:1px;right:1px;width:16px;height:16px;line-height:14px;padding:0;border:none;border-radius:50%;background:rgba(0,0,0,.55);color:#fff;font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;}",
+  ".pra-chip-x:hover{background:rgba(0,0,0,.75);}",
+  // image thumbnails shown inside a sent user message
+  ".pra-msg-imgs{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px;}",
+  ".pra-msg-imgs img{max-width:180px;max-height:180px;border-radius:8px;border:1px solid var(--accent-white30,rgba(255,255,255,.35));display:block;}",
+  ".pra-msg-imgph{padding:6px 10px;border-radius:8px;background:rgba(255,255,255,.22);font-size:.85em;}",
   // ---- markdown (assistant) ----
   ".pra-md>:first-child{margin-top:0;}.pra-md>:last-child{margin-bottom:0;}",
   ".pra-md p{margin:0 0 8px;}.pra-md ul,.pra-md ol{margin:6px 0;padding-left:22px;}.pra-md li{margin:2px 0;}",
@@ -182,11 +193,108 @@ function setRich(bubble, text, attachmentID) {
   } catch (e) {}
 }
 
+// Downscale an image File/Blob to a small JPEG data URL for in-chat display +
+// persistence (keeps the conversation JSON light; full-res file goes to the agent).
+// Resolves null on any failure — callers degrade to a generic chip.
+function makeThumb(doc, file) {
+  return new Promise(function (resolve) {
+    try {
+      var win = doc.defaultView;
+      var url = win.URL.createObjectURL(file);
+      var img = doc.createElement("img");
+      img.onload = function () {
+        try {
+          var max = 320;                         // longest side; covers retina chips
+          var w = img.naturalWidth || 1, h = img.naturalHeight || 1;
+          var s = Math.min(1, max / Math.max(w, h));
+          var cw = Math.max(1, Math.round(w * s)), ch = Math.max(1, Math.round(h * s));
+          var canvas = doc.createElement("canvas"); canvas.width = cw; canvas.height = ch;
+          canvas.getContext("2d").drawImage(img, 0, 0, cw, ch);
+          var data = canvas.toDataURL("image/jpeg", 0.72);
+          try { win.URL.revokeObjectURL(url); } catch (e) {}
+          resolve(data || null);
+        } catch (e) { try { win.URL.revokeObjectURL(url); } catch (e2) {} resolve(null); }
+      };
+      img.onerror = function () { try { win.URL.revokeObjectURL(url); } catch (e) {} resolve(null); };
+      img.src = url;
+    } catch (e) { resolve(null); }
+  });
+}
+
+// Queue a pasted image for the NEXT turn. We keep the in-memory Blob (+ a thumb for
+// the chip) and only write it to disk on send (see persistPending) — so an image the
+// user removes with × or abandons by navigating away never touches disk, avoiding an
+// orphaned-file leak in <workdir>/images.
+async function addPendingImage(session, file) {
+  try {
+    var doc = session.view && session.view.doc; if (!doc) return;
+    var thumb = await makeThumb(doc, file);
+    if (!session.pending) session.pending = [];
+    session.pending.push({ file: file, thumb: thumb });
+    renderPending(session);
+  } catch (e) { try { Zotero.debug("[PaperReadingAgent] addPendingImage: " + e); } catch (e2) {} }
+}
+
+// On send, write each queued image to <workdir>/images and return [{path, thumb}] for
+// the turn. Files written here ARE retained (they back the persisted transcript). An
+// image that fails to write is dropped (best-effort) rather than aborting the send.
+var IMG_SEQ = 0;
+async function persistPending(ctx, pend) {
+  var out = [];
+  if (!pend || !pend.length) return out;
+  var dir = PathUtils.join(ctx.workdir, "images");
+  try { await IOUtils.makeDirectory(dir, { ignoreExisting: true, createAncestors: true }); } catch (e) {}
+  for (var i = 0; i < pend.length; i++) {
+    var im = pend[i];
+    try {
+      var buf = await im.file.arrayBuffer();
+      var ext = ((im.file.type || "image/png").split("/")[1] || "png").replace(/[^a-z0-9]/gi, "").slice(0, 5) || "png";
+      var path = PathUtils.join(dir, "img-" + Date.now() + "-" + (++IMG_SEQ) + "." + ext);
+      await IOUtils.write(path, new Uint8Array(buf));
+      out.push({ path: path, thumb: im.thumb || null });
+    } catch (e) { try { Zotero.debug("[PaperReadingAgent] persistPending: " + e); } catch (e2) {} }
+  }
+  return out;
+}
+
+// Paint the pending-attachment chips in the composer (hidden when empty).
+function renderPending(session) {
+  var v = session.view; if (!v || !v.ui.attach) return;
+  var doc = v.doc, box = v.ui.attach, pend = session.pending || [];
+  box.textContent = "";
+  box.style.display = pend.length ? "flex" : "none";
+  pend.forEach(function (im) {
+    var chip = el(doc, "div"); chip.className = "pra-chip";
+    if (im.thumb) { var t = el(doc, "img"); t.className = "pra-chip-img"; t.src = im.thumb; chip.appendChild(t); }
+    var x = el(doc, "button", null, "×"); x.className = "pra-chip-x"; x.setAttribute("title", "Remove");
+    x.addEventListener("click", function () {
+      var i = session.pending.indexOf(im);
+      if (i >= 0) session.pending.splice(i, 1);
+      renderPending(session);
+    });
+    chip.appendChild(x);
+    box.appendChild(chip);
+  });
+}
+
 function renderMessage(doc, container, msg, attachmentID) {
   var row = el(doc, "div"); row.className = "pra-row " + (msg.role === "user" ? "user" : "assistant");
   var bubble = el(doc, "div"); bubble.className = "pra-bubble " + (msg.role === "user" ? "user" : "assistant");
-  if (msg.role === "assistant" && msg.content) setRich(bubble, msg.content, attachmentID);
-  else bubble.textContent = msg.content || "";
+  // a user message may carry image thumbnails (data URLs) above its text
+  if (msg.role === "user" && msg.images && msg.images.length) {
+    var imgsDiv = el(doc, "div"); imgsDiv.className = "pra-msg-imgs";
+    msg.images.forEach(function (im) {
+      if (!im) return;
+      if (im.thumb) { var pic = el(doc, "img"); pic.src = im.thumb; imgsDiv.appendChild(pic); }
+      else imgsDiv.appendChild(el(doc, "div", null, "🖼 image")).className = "pra-msg-imgph";  // thumb failed → placeholder, never an empty bubble
+    });
+    if (imgsDiv.childNodes.length) bubble.appendChild(imgsDiv);
+    if (msg.content) { var txt = el(doc, "div"); txt.textContent = msg.content; bubble.appendChild(txt); }
+  } else if (msg.role === "assistant" && msg.content) {
+    setRich(bubble, msg.content, attachmentID);
+  } else {
+    bubble.textContent = msg.content || "";
+  }
   row.appendChild(bubble);
   container.appendChild(row);
   return bubble;
@@ -203,13 +311,14 @@ function buildSkeleton(doc, body) {
   var input = el(doc, "textarea"); input.className = "pra-input";
   input.setAttribute("rows", "4");
   input.setAttribute("placeholder", "Ask about this paper…   (Enter to send · Shift+Enter for a new line)");
+  var attach = el(doc, "div"); attach.className = "pra-attach"; attach.style.display = "none";
   var bar = el(doc, "div"); bar.className = "pra-bar";
   var send = el(doc, "button"); send.className = "pra-send"; send.textContent = "Send";
   bar.appendChild(send);
-  composer.append(input, bar);
+  composer.append(input, attach, bar);
   wrap.append(banner, messages, status, composer);
   body.append(wrap);
-  return { banner: banner, messages: messages, status: status, input: input, send: send };
+  return { banner: banner, messages: messages, status: status, input: input, send: send, attach: attach };
 }
 
 // ---- Session model ---------------------------------------------------------
@@ -221,7 +330,7 @@ function buildSkeleton(doc, body) {
 // `session.view` (the current ui), so a re-mount just swaps the view.
 var SESSIONS = Object.create(null);   // attachmentKey -> session
 function getSession(key) {
-  return SESSIONS[key] || (SESSIONS[key] = { key: key, ctx: null, conv: null, run: null, richId: 0, view: null });
+  return SESSIONS[key] || (SESSIONS[key] = { key: key, ctx: null, conv: null, run: null, richId: 0, view: null, pending: [] });
 }
 function isBusy(session) { return !!(session.run && !session.run.finished); }
 
@@ -251,7 +360,7 @@ function flushRender(session) {
   renderAssistant(session);
 }
 
-function startTurn(session, content) {
+function startTurn(session, content, images) {
   var run = session.run = { liveRef: {}, startedAt: Date.now(), lastActivity: "thinking…", finished: false, text: "", target: "", drip: 0, timer: 0 };
   setSending(session, true);
   paintStatus(session);
@@ -296,7 +405,7 @@ function startTurn(session, content) {
     onDone: function () { endTurn(null); },
     onError: function (msg) { endTurn(msg); },
   };
-  PRAChatService.runTurn(prefs(), session.ctx, session.conv, content, adapter, run.liveRef)
+  PRAChatService.runTurn(prefs(), session.ctx, session.conv, content, images, adapter, run.liveRef)
     .catch(function (e) { endTurn(String(e)); });
 }
 
@@ -339,6 +448,7 @@ async function mount(body, item) {
   ui.messages.scrollTop = ui.messages.scrollHeight;
 
   session.view = { ui: ui, doc: doc, attachmentID: ctx.attachmentID, assistantBubble: null };
+  renderPending(session);   // restore any queued image chips after a re-mount
 
   if (isBusy(session)) {
     // last message is the in-flight assistant — re-attach to it
@@ -353,12 +463,20 @@ async function mount(body, item) {
 
   function doSend() {
     var content = (ui.input.value || "").trim();
-    try { Zotero.debug("[PaperReadingAgent] doSend len=" + content.length + " busy=" + isBusy(session) + " run=" + (session.run ? ("finished:" + session.run.finished) : "null") + " view=" + (!!session.view)); } catch (e) {}
-    if (!content || isBusy(session)) return;
+    var pend = (session.pending && session.pending.length) ? session.pending.slice() : null;
+    try { Zotero.debug("[PaperReadingAgent] doSend len=" + content.length + " imgs=" + (pend ? pend.length : 0) + " busy=" + isBusy(session) + " run=" + (session.run ? ("finished:" + session.run.finished) : "null") + " view=" + (!!session.view)); } catch (e) {}
+    if ((!content && !pend) || isBusy(session)) return;
     ui.input.value = "";
     ui.input.style.height = "auto";
-    try { startTurn(session, content); }
-    catch (e) { try { Zotero.debug("[PaperReadingAgent] startTurn threw: " + e); } catch (e2) {} ui.status.textContent = "⚠ " + e; }
+    session.pending = [];
+    renderPending(session);
+    // write queued images to disk first, then start the turn with their paths
+    persistPending(ctx, pend).then(function (images) {
+      images = (images && images.length) ? images : null;
+      if (!content && !images) { ui.status.textContent = "⚠ Could not attach the image(s)."; return; }
+      try { startTurn(session, content, images); }
+      catch (e) { try { Zotero.debug("[PaperReadingAgent] startTurn threw: " + e); } catch (e2) {} ui.status.textContent = "⚠ " + e; }
+    });
   }
   ui.send.addEventListener("click", function () {   // Send, or Stop (cancel) while a turn runs
     try { Zotero.debug("[PaperReadingAgent] send-click busy=" + isBusy(session)); } catch (e) {}
@@ -372,6 +490,22 @@ async function mount(body, item) {
   ui.input.addEventListener("input", function () {  // auto-grow
     ui.input.style.height = "auto";
     ui.input.style.height = Math.min(340, ui.input.scrollHeight) + "px";
+  });
+  // Paste an image (e.g. a screenshot) straight into the composer → queued as an
+  // attachment for the next turn. Only swallow the paste when it actually carries
+  // image files; normal text paste is left untouched.
+  ui.input.addEventListener("paste", function (e) {
+    var items = (e.clipboardData && e.clipboardData.items) || [];
+    var files = [];
+    for (var i = 0; i < items.length; i++) {
+      if (items[i].kind === "file" && items[i].type && items[i].type.indexOf("image/") === 0) {
+        var f = items[i].getAsFile();
+        if (f) files.push(f);
+      }
+    }
+    if (!files.length) return;
+    e.preventDefault();
+    files.forEach(function (f) { addPendingImage(session, f); });
   });
   // Delegated [p.N] citation clicks: ONE listener for the whole transcript, so it
   // survives streaming re-renders and never depends on per-span binding.
@@ -442,5 +576,14 @@ export async function healthcheck() {
   return { ok: !!(h && h.ok), version: h && h.version, error: h && h.error, label: backend.label };
 }
 
+// On-demand update check/install — used by the Settings pane's "Check for updates"
+// button. Uses the plugin id passed to register() (config.addonID).
+export async function checkForUpdates() {
+  return await PRAUpdater.checkForUpdates(PLUGIN_ID);
+}
+export async function installUpdate() {
+  return await PRAUpdater.installPendingUpdate();
+}
+
 // reachable from Run JavaScript for debugging (unchanged handle from v0.1.0)
-try { Zotero.PaperReadingAgent = { register: register, unregister: unregister, dump: dump, healthcheck: healthcheck }; } catch (e) {}
+try { Zotero.PaperReadingAgent = { register: register, unregister: unregister, dump: dump, healthcheck: healthcheck, checkForUpdates: checkForUpdates, installUpdate: installUpdate }; } catch (e) {}
