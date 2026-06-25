@@ -55,8 +55,11 @@ var PRA_CSS = [
   ".pra-banner{display:inline-flex;align-items:center;gap:6px;align-self:flex-start;font-size:11px;padding:3px 10px;border-radius:999px;background:var(--fill-quinary,rgba(0,0,0,.05));color:var(--fill-secondary,#6b7280);max-width:100%;}",
   ".pra-banner::before{content:'';width:7px;height:7px;border-radius:50%;background:currentColor;flex:none;}",
   ".pra-banner.ok{color:var(--accent-green,#2a9d4a);}.pra-banner.err{color:var(--accent-red,#d23b3b);}",
-  // messages
-  ".pra-messages{display:flex;flex-direction:column;gap:16px;overflow-y:auto;max-height:56vh;padding:2px 1px;}",
+  // messages — user-select:text makes the transcript selectable/copyable. Zotero's
+  // item-pane is a privileged XUL document whose default is -moz-user-select:none,
+  // which content inherits; we must explicitly opt the message area back in (this
+  // only changes selection behaviour, not layout/appearance).
+  ".pra-messages{display:flex;flex-direction:column;gap:16px;overflow-y:auto;max-height:56vh;padding:2px 1px;-moz-user-select:text;user-select:text;}",
   ".pra-row{display:flex;}.pra-row.user{justify-content:flex-end;}.pra-row.assistant{justify-content:flex-start;}",
   // user = accent bubble; assistant = clean full-width prose (premium, uses narrow pane well)
   ".pra-bubble{word-break:break-word;}",
