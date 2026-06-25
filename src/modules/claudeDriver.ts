@@ -34,6 +34,13 @@ function getSubprocess() {
 }
 function log(m) { try { Zotero.debug("[PaperReadingAgent] claudeDriver: " + m); } catch (e) {} }
 
+// Directory of an absolute path (pure string op so buildArgv stays Node-testable —
+// no PathUtils). Handles both / and \ separators.
+function parentDir(p) {
+  var i = Math.max(String(p).lastIndexOf("/"), String(p).lastIndexOf("\\"));
+  return i > 0 ? String(p).slice(0, i) : String(p);
+}
+
 // Read-only posture (analog of codex --sandbox read-only -c approval_policy=never).
 // In headless -p mode an out-of-policy tool is AUTO-DENIED (never hangs), so this
 // is safe without --dangerously-skip-permissions. Bash is scoped to pdftotext so
@@ -57,6 +64,20 @@ export function buildArgv(workdir, sessionId, prompt, opts) {
   // grant read access to the workdir (CLAUDE.md) and the PDF's directory.
   argv.push("--add-dir", workdir);
   if (opts.addDir && opts.addDir !== workdir) argv.push("--add-dir", opts.addDir);
+  // grant read access to each attached image's directory (deduped; skip ones already
+  // covered by workdir/addDir). claude has no image input flag — it "sees" an image
+  // by reading the file with its (multimodal) Read tool, so the dir must be allowed.
+  var imgDirs = [];
+  if (opts.images && opts.images.length) {
+    var covered = [workdir];
+    if (opts.addDir) covered.push(opts.addDir);
+    for (var di = 0; di < opts.images.length; di++) {
+      if (!opts.images[di]) continue;
+      var d = parentDir(opts.images[di]);
+      if (covered.indexOf(d) < 0 && imgDirs.indexOf(d) < 0) imgDirs.push(d);
+    }
+    for (var dj = 0; dj < imgDirs.length; dj++) argv.push("--add-dir", imgDirs[dj]);
+  }
   // --allowedTools is variadic; --disallowedTools (a flag) terminates the list.
   var allow = RO_ALLOW.slice();
   if (opts.webSearch !== false) allow = allow.concat(RO_WEB);
@@ -66,7 +87,22 @@ export function buildArgv(workdir, sessionId, prompt, opts) {
   argv = argv.concat(RO_DENY);
   if (opts.claudeModel) argv.push("--model", opts.claudeModel);
   if (sessionId) argv.push("--resume", sessionId);
-  argv.push("--", prompt);
+  // claude has no image-input flag in -p mode; tell it to view each attached image
+  // with the Read tool (the dirs were allow-listed via --add-dir above).
+  var finalPrompt = prompt;
+  if (opts.images && opts.images.length) {
+    var lines = [];
+    for (var pi = 0; pi < opts.images.length; pi++) {
+      if (opts.images[pi]) lines.push("  " + opts.images[pi]);
+    }
+    if (lines.length)
+      finalPrompt =
+        prompt +
+        "\n\n[The user attached the following image file(s). View them with the Read tool to answer:\n" +
+        lines.join("\n") +
+        "\n]";
+  }
+  argv.push("--", finalPrompt);
   return argv;
 }
 

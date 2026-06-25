@@ -215,7 +215,15 @@ export async function runTurn(opts, workdir, threadId, prompt, onEvent, liveRef)
   }, timeoutMs);
 
   try {
-    var turnParams = { threadId: tid, input: [{ type: "text", text: prompt }] };
+    // input is UserInput[]: a text item plus one localImage item per attached image
+    // (codex app-server v2 UserInput union: {type:"text",text} | {type:"localImage",path}).
+    var input = [{ type: "text", text: prompt }];
+    if (opts.images && opts.images.length) {
+      for (var im = 0; im < opts.images.length; im++) {
+        if (opts.images[im]) input.push({ type: "localImage", path: opts.images[im] });
+      }
+    }
+    var turnParams = { threadId: tid, input: input };
     var effort = opts.reasoningEffort;   // minimal|low|medium|high
     // codex's API rejects effort "minimal" together with the web_search / image_gen
     // tools (every turn 400s: "tools cannot be used with reasoning.effort 'minimal'").
